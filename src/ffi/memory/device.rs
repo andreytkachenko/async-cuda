@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use cpp::cpp;
 
 use crate::device::DeviceId;
@@ -8,6 +10,163 @@ use crate::ffi::result;
 use crate::ffi::stream::Stream;
 
 type Result<T> = std::result::Result<T, crate::error::Error>;
+
+/// Synchronous implementation of [`crate::DynDeviceBuffer`].
+///
+/// Refer to [`crate::DynDeviceBuffer`] for documentation.
+pub struct DynDeviceBuffer {
+    pub num_elements: usize,
+    internal: DevicePtr,
+    device: DeviceId,
+    type_id: std::any::TypeId,
+}
+
+impl DynDeviceBuffer {
+    /// Get readonly reference to internal [`DevicePtr`].
+    #[inline(always)]
+    pub fn as_internal(&self) -> &DevicePtr {
+        &self.internal
+    }
+
+    /// Get mutable reference to internal [`DevicePtr`].
+    #[inline(always)]
+    pub fn as_mut_internal(&mut self) -> &mut DevicePtr {
+        &mut self.internal
+    }
+
+    #[inline]
+    pub fn downcast<T: Copy + 'static>(mut self) -> std::result::Result<DeviceBuffer<T>, Self> {
+        if self.type_id == std::any::TypeId::of::<T>() {
+            Ok(DeviceBuffer {
+                num_elements: self.num_elements,
+                internal: unsafe { self.internal.take() },
+                device: self.device,
+                _phantom: std::marker::PhantomData,
+            })
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Copy from host buffer.
+    ///
+    /// # Safety
+    ///
+    /// This function is marked unsafe because it does not synchronize and the operation might not
+    /// have completed when it returns.
+    pub unsafe fn copy_from_async<T: Copy + 'static>(
+        &mut self,
+        other: &HostBuffer<T>,
+        stream: &Stream,
+    ) -> Result<()> {
+        assert_eq!(self.num_elements, other.num_elements);
+        assert_eq!(self.type_id, TypeId::of::<T>());
+
+        let ptr_to = self.as_mut_internal().as_mut_ptr();
+        let ptr_from = other.as_internal().as_ptr();
+        let stream_ptr = stream.as_internal().as_ptr();
+        let size = self.num_elements * std::mem::size_of::<T>();
+        let ret = cpp!(unsafe [
+            ptr_from as "void*",
+            ptr_to as "void*",
+            size as "std::size_t",
+            stream_ptr as "const void*"
+        ] -> i32 as "std::int32_t" {
+            return cudaMemcpyAsync(
+                ptr_to,
+                ptr_from,
+                size,
+                cudaMemcpyHostToDevice,
+                (cudaStream_t) stream_ptr
+            );
+        });
+        result!(ret)
+    }
+
+    /// Copy to host buffer.
+    ///
+    /// # Safety
+    ///
+    /// This function is marked unsafe because it does not synchronize and the operation might not
+    /// have completed when it returns.
+    pub unsafe fn copy_to_async<T: Copy + 'static>(
+        &self,
+        other: &mut HostBuffer<T>,
+        stream: &Stream,
+    ) -> Result<()> {
+        assert_eq!(self.num_elements, other.num_elements);
+        assert_eq!(self.type_id, TypeId::of::<T>());
+
+        let ptr_from = self.as_internal().as_ptr();
+        let ptr_to = other.as_mut_internal().as_mut_ptr();
+        let size = self.num_elements * std::mem::size_of::<T>();
+        let stream_ptr = stream.as_internal().as_ptr();
+        let ret = cpp!(unsafe [
+            ptr_from as "void*",
+            ptr_to as "void*",
+            size as "std::size_t",
+            stream_ptr as "const void*"
+        ] -> i32 as "std::int32_t" {
+            return cudaMemcpyAsync(
+                ptr_to,
+                ptr_from,
+                size,
+                cudaMemcpyDeviceToHost,
+                (cudaStream_t) stream_ptr
+            );
+        });
+        result!(ret)
+    }
+
+    /// Release the buffer memory.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if binding to the corresponding device fails.
+    ///
+    /// # Safety
+    ///
+    /// The buffer may not be used after this function is called, except for being dropped.
+    pub unsafe fn free(&mut self) {
+        if self.internal.is_null() {
+            return;
+        }
+
+        Device::set_or_panic(self.device);
+
+        // SAFETY: Safe because we won't use pointer after this.
+        let mut internal = unsafe { self.internal.take() };
+        let ptr = internal.as_mut_ptr();
+        let _ret = cpp!(unsafe [
+            ptr as "void*"
+        ] -> i32 as "std::int32_t" {
+            return cudaFree(ptr);
+        });
+    }
+}
+
+impl Drop for DynDeviceBuffer {
+    fn drop(&mut self) {
+        // SAFETY: This is safe since the buffer cannot be used after this.
+        unsafe {
+            self.free();
+        }
+    }
+}
+
+/// Implements [`Send`] for [`DynDeviceBuffer`].
+///
+/// # Safety
+///
+/// This property is inherited from the CUDA API, which is thread-safe.
+unsafe impl Send for DynDeviceBuffer {}
+
+/// Implements [`Sync`] for [`DynDeviceBuffer`].
+///
+/// # Safety
+///
+/// This property is inherited from the CUDA API, which is thread-safe.
+unsafe impl Sync for DynDeviceBuffer {}
 
 /// Synchronous implementation of [`crate::DeviceBuffer`].
 ///
@@ -202,6 +361,19 @@ impl<T: Copy> DeviceBuffer<T> {
         ] -> i32 as "std::int32_t" {
             return cudaFree(ptr);
         });
+    }
+
+    /// Convert buffer into untyped version
+    pub fn into_dyn(mut self) -> DynDeviceBuffer
+    where
+        T: Copy + 'static,
+    {
+        DynDeviceBuffer {
+            num_elements: self.num_elements,
+            internal: unsafe { self.internal.take() },
+            device: self.device,
+            type_id: std::any::TypeId::of::<T>(),
+        }
     }
 }
 

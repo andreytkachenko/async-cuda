@@ -5,6 +5,167 @@ use crate::stream::Stream;
 
 type Result<T> = std::result::Result<T, crate::error::Error>;
 
+pub struct DynDeviceBuffer {
+    inner: ffi::memory::DynDeviceBuffer,
+}
+
+impl DynDeviceBuffer {
+    /// Copies memory from the provided pinned host buffer to this buffer.
+    ///
+    /// This function synchronizes the stream implicitly.
+    ///
+    /// [CUDA documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY_1g85073372f776b4c4d5f89f7124b7bf79)
+    ///
+    /// # Pinned transfer
+    ///
+    /// The other buffer (of type [`HostBuffer`]) is always a pinned buffer. This function is
+    /// guaranteed to produce a pinned transfer on the runtime thread.
+    ///
+    /// # Stream ordered semantics
+    ///
+    /// This function uses stream ordered semantics. It can only be guaranteed to complete
+    /// sequentially relative to operations scheduled on the same stream or the default stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Buffer to copy from.
+    /// * `stream` - Stream to use.
+    #[inline]
+    pub async fn copy_from<T: Copy>(
+        &mut self,
+        other: &HostBuffer<T>,
+        stream: &Stream,
+    ) -> Result<()> {
+        // SAFETY: Stream is synchronized after this.
+        unsafe {
+            self.copy_from_async(other, stream).await?;
+        }
+        stream.synchronize().await?;
+        Ok(())
+    }
+
+    /// Copies memory from the provided pinned host buffer to this buffer.
+    ///
+    /// [CUDA documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY_1g85073372f776b4c4d5f89f7124b7bf79)
+    ///
+    /// # Pinned transfer
+    ///
+    /// The other buffer (of type [`HostBuffer`]) is always a pinned buffer. This function is
+    /// guaranteed to produce a pinned transfer on the runtime thread.
+    ///
+    /// # Stream ordered semantics
+    ///
+    /// This function uses stream ordered semantics. It can only be guaranteed to complete
+    /// sequentially relative to operations scheduled on the same stream or the default stream.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because the operation might not have completed when the function
+    /// returns, and thus the state of the buffer is undefined.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Buffer to copy from.
+    /// * `stream` - Stream to use.
+    pub async unsafe fn copy_from_async<T: Copy>(
+        &mut self,
+        other: &HostBuffer<T>,
+        stream: &Stream,
+    ) -> Result<()> {
+        assert_eq!(self.num_elements(), other.num_elements());
+
+        Future::new(move || self.inner.copy_from_async(other.inner(), stream.inner())).await
+    }
+
+    /// Copies memory from this buffer to the provided pinned host buffer.
+    ///
+    /// This function synchronizes the stream implicitly.
+    ///
+    /// [CUDA documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY_1g85073372f776b4c4d5f89f7124b7bf79)
+    ///
+    /// # Pinned transfer
+    ///
+    /// The other buffer (of type [`HostBuffer`]) is always a pinned buffer. This function is
+    /// guaranteed to produce a pinned transfer on the runtime thread.
+    ///
+    /// # Stream ordered semantics
+    ///
+    /// This function uses stream ordered semantics. It can only be guaranteed to complete
+    /// sequentially relative to operations scheduled on the same stream or the default stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Buffer to copy to.
+    /// * `stream` - Stream to use.
+    #[inline]
+    pub async fn copy_to<T: Copy>(&self, other: &mut HostBuffer<T>, stream: &Stream) -> Result<()> {
+        // SAFETY: Stream is synchronized after this.
+        unsafe {
+            self.copy_to_async(other, stream).await?;
+        }
+        stream.synchronize().await?;
+        Ok(())
+    }
+
+    /// Copies memory from this buffer to the provided pinned host buffer.
+    ///
+    /// [CUDA documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY_1g85073372f776b4c4d5f89f7124b7bf79)
+    ///
+    /// # Pinned transfer
+    ///
+    /// The other buffer (of type [`HostBuffer`]) is always a pinned buffer. This function is
+    /// guaranteed to produce a pinned transfer on the runtime thread.
+    ///
+    /// # Stream ordered semantics
+    ///
+    /// This function uses stream ordered semantics. It can only be guaranteed to complete
+    /// sequentially relative to operations scheduled on the same stream or the default stream.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because the operation might not have completed when the function
+    /// returns, and thus the state of the buffer is undefined.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Buffer to copy to.
+    /// * `stream` - Stream to use.
+    pub async unsafe fn copy_to_async<T: Copy>(
+        &self,
+        other: &mut HostBuffer<T>,
+        stream: &Stream,
+    ) -> Result<()> {
+        assert_eq!(self.num_elements(), other.num_elements());
+        Future::new(move || self.inner.copy_to_async(other.inner_mut(), stream.inner())).await
+    }
+
+    /// Get number of elements in buffer.
+    #[inline(always)]
+    pub fn num_elements(&self) -> usize {
+        self.inner.num_elements
+    }
+
+    /// Access the inner synchronous implementation of [`DeviceBuffer`].
+    #[inline(always)]
+    pub fn inner(&self) -> &ffi::memory::DynDeviceBuffer {
+        &self.inner
+    }
+
+    /// Access the inner synchronous implementation of [`DeviceBuffer`].
+    #[inline(always)]
+    pub fn inner_mut(&mut self) -> &mut ffi::memory::DynDeviceBuffer {
+        &mut self.inner
+    }
+
+    #[inline]
+    pub fn downcast<T: Copy + 'static>(self) -> std::result::Result<DeviceBuffer<T>, Self> {
+        match self.inner.downcast() {
+            Ok(inner) => Ok(DeviceBuffer { inner }),
+            Err(inner) => Err(Self { inner }),
+        }
+    }
+}
+
 /// A buffer on the device.
 ///
 /// # Example
@@ -244,6 +405,13 @@ impl<T: Copy + 'static> DeviceBuffer<T> {
     #[inline(always)]
     pub fn inner_mut(&mut self) -> &mut ffi::memory::DeviceBuffer<T> {
         &mut self.inner
+    }
+
+    #[inline]
+    pub fn into_dyn(self) -> DynDeviceBuffer {
+        DynDeviceBuffer {
+            inner: self.inner.into_dyn(),
+        }
     }
 }
 

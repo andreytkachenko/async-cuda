@@ -11,7 +11,7 @@ pub mod stream;
 pub mod npp;
 
 pub use device::{num_devices, Device, DeviceId, MemoryInfo};
-pub use memory::{DeviceBuffer, DeviceBuffer2D, HostBuffer};
+pub use memory::{DeviceBuffer, DeviceBuffer2D, DynDeviceBuffer, HostBuffer};
 pub use stream::Stream;
 
 pub use error::Error;

@@ -108,16 +108,29 @@ impl<T: Copy> HostBuffer<T> {
 
     #[cfg(feature = "ndarray")]
     pub fn copy_from_array<D: ndarray::Dimension>(&mut self, array: &ndarray::ArrayView<T, D>) {
-        assert!(
-            array.is_standard_layout(),
-            "array must be in standard layout"
-        );
         // SAFETY: This is safe because we only instantiate the slice temporarily whilst having
         // exclusive mutable access to it to copy the data into it.
         let target = unsafe {
             std::slice::from_raw_parts_mut(self.internal.as_mut_ptr() as *mut T, self.num_elements)
         };
-        target.copy_from_slice(array.as_slice().unwrap());
+
+        if array.is_standard_layout() {
+            target.copy_from_slice(array.as_slice().unwrap());
+        } else {
+            if array.len() != target.len() {
+                panic!(
+                    "copy_from_array: source array length ({}) does not match destination length ({})",
+                    array.len(),
+                    target.len(),
+                )
+            }
+
+            array
+                .iter()
+                .copied()
+                .enumerate()
+                .for_each(|(idx, val)| target[idx] = val);
+        }
     }
 
     #[inline]
