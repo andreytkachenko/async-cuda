@@ -45,7 +45,7 @@ impl<T: Copy + 'static> HostBuffer<T> {
     /// * `slice` - Data to copy into the new host buffer.
     pub async fn from_slice(slice: &[T]) -> Self {
         let mut this = Self::new(slice.len()).await;
-        this.copy_from_slice(slice);
+        this.copy_from_slice(slice, 0);
         this
     }
 
@@ -63,7 +63,7 @@ impl<T: Copy + 'static> HostBuffer<T> {
     #[cfg(feature = "ndarray")]
     pub async fn from_array<D: ndarray::Dimension>(array: &ndarray::ArrayView<'_, T, D>) -> Self {
         let mut this = Self::new(array.len()).await;
-        this.copy_from_array(array);
+        this.copy_from_array(array, 0);
         this
     }
 
@@ -188,6 +188,7 @@ impl<T: Copy + 'static> HostBuffer<T> {
     /// # Arguments
     ///
     /// * `slice` - Data to copy into the new host buffer.
+    /// * `offset` - Host buffer offset to copy into.
     ///
     /// # Example
     ///
@@ -200,8 +201,8 @@ impl<T: Copy + 'static> HostBuffer<T> {
     /// # })
     /// ```
     #[inline(always)]
-    pub fn copy_from_slice(&mut self, slice: &[T]) {
-        self.inner.copy_from_slice(slice);
+    pub fn copy_from_slice(&mut self, slice: &[T], offset: usize) {
+        self.inner.copy_from_slice(slice, offset);
     }
 
     /// Copy array into the host buffer from a slice.
@@ -217,8 +218,12 @@ impl<T: Copy + 'static> HostBuffer<T> {
     /// * `array` - Array to copy into the new host buffer.
     #[cfg(feature = "ndarray")]
     #[inline(always)]
-    pub fn copy_from_array<D: ndarray::Dimension>(&mut self, array: &ndarray::ArrayView<T, D>) {
-        self.inner.copy_from_array(array)
+    pub fn copy_from_array<D: ndarray::Dimension>(
+        &mut self,
+        array: &ndarray::ArrayView<T, D>,
+        offset: usize,
+    ) {
+        self.inner.copy_from_array(array, offset)
     }
 
     /// Copy the data to a [`Vec`] and return it.

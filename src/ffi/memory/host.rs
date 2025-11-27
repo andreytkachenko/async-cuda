@@ -60,14 +60,14 @@ impl<T: Copy> HostBuffer<T> {
 
     pub fn from_slice(slice: &[T]) -> Self {
         let mut this = Self::new(slice.len());
-        this.copy_from_slice(slice);
+        this.copy_from_slice(slice, 0);
         this
     }
 
     #[cfg(feature = "ndarray")]
     pub fn from_array<D: ndarray::Dimension>(array: &ndarray::ArrayView<T, D>) -> Self {
         let mut this = Self::new(array.len());
-        this.copy_from_array(array);
+        this.copy_from_array(array, 0);
         this
     }
 
@@ -97,29 +97,35 @@ impl<T: Copy> HostBuffer<T> {
         other.copy_from_async(self, stream)
     }
 
-    pub fn copy_from_slice(&mut self, slice: &[T]) {
+    pub fn copy_from_slice(&mut self, slice: &[T], offset: usize) {
         // SAFETY: This is safe because we only instantiate the slice temporarily whilst having
         // exclusive mutable access to it to copy the data into it.
         let target = unsafe {
             std::slice::from_raw_parts_mut(self.internal.as_mut_ptr() as *mut T, self.num_elements)
         };
-        target.copy_from_slice(slice);
+        target[offset..offset + slice.len()].copy_from_slice(slice);
     }
 
     #[cfg(feature = "ndarray")]
-    pub fn copy_from_array<D: ndarray::Dimension>(&mut self, array: &ndarray::ArrayView<T, D>) {
+    pub fn copy_from_array<D: ndarray::Dimension>(
+        &mut self,
+        array: &ndarray::ArrayView<T, D>,
+        offset: usize,
+    ) {
         // SAFETY: This is safe because we only instantiate the slice temporarily whilst having
         // exclusive mutable access to it to copy the data into it.
         let target = unsafe {
             std::slice::from_raw_parts_mut(self.internal.as_mut_ptr() as *mut T, self.num_elements)
         };
+
+        let target = &mut target[offset..];
 
         if array.is_standard_layout() {
             target.copy_from_slice(array.as_slice().unwrap());
         } else {
-            if array.len() != target.len() {
+            if array.len() > target.len() {
                 panic!(
-                    "copy_from_array: source array length ({}) does not match destination length ({})",
+                    "copy_from_array: source array length ({}) greater then destination length ({})",
                     array.len(),
                     target.len(),
                 )
