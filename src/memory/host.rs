@@ -232,6 +232,16 @@ impl<T: Copy + 'static> HostBuffer<T> {
         self.inner.to_vec()
     }
 
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        self.inner.as_slice()
+    }
+
+    #[inline(always)]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.inner.as_mut_slice()
+    }
+
     /// Copy the data to an [`ndarray::Array`] and return it.
     ///
     /// Function panics if provided shape does not match size of array.

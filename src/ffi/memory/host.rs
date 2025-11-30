@@ -141,12 +141,19 @@ impl<T: Copy> HostBuffer<T> {
 
     #[inline]
     pub fn to_vec(&self) -> Vec<T> {
-        // SAFETY: This is safe because we only instantiate the slice temporarily to copy the data
-        // to a safe Rust [`Vec`].
-        let source = unsafe {
-            std::slice::from_raw_parts(self.internal.as_ptr() as *const T, self.num_elements)
-        };
-        source.to_vec()
+        self.as_slice().to_vec()
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.internal.as_ptr() as *const T, self.num_elements) }
+    }
+
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        unsafe {
+            std::slice::from_raw_parts_mut(self.internal.as_ptr() as *mut T, self.num_elements)
+        }
     }
 
     #[cfg(feature = "ndarray")]
